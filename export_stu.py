@@ -11,20 +11,21 @@ import transformers
 # 2. 生成一个全为负无穷(float.min)的矩阵，仅保留上三角(triu)
 # 3. 返回形状必须是 (batch, 1, seq_len, seq_len)
 def mask_patch(*args, **kwargs):
-    # --- 在这里实现代码 ---
-    
-    # 1. 解析参数 (提示：优先检查 kwargs 中的 input_shape)
-    bsz, seq_len = 1, 32 # 默认值
-    
-    # [YOUR CODE HERE] 解析 input_shape
+    # 1. 解析参数
+    if "input_shape" in kwargs:
+        bsz, seq_len = kwargs["input_shape"]
+    else:
+        bsz, seq_len = 1, 32
     
     dtype = kwargs.get("dtype", torch.float32)
     device = kwargs.get("device", torch.device("cpu"))
 
-    # 2. 生成掩码 (提示：使用 torch.full, torch.triu 或 masked_fill)
-    # [YOUR CODE HERE]
+    # 2. 生成上三角因果掩码
+    mask = torch.full((seq_len, seq_len), torch.finfo(dtype).min, dtype=dtype, device=device)
+    mask = torch.triu(mask, diagonal=1)
+    mask = mask.unsqueeze(0).unsqueeze(0).expand(bsz, 1, seq_len, seq_len)
     
-    return mask # 确保返回的是 4D 张量
+    return mask
 
 # 应用补丁
 transformers.masking_utils.create_causal_mask = mask_patch
@@ -40,11 +41,8 @@ class Qwen3ONNXWrapper(torch.nn.Module):
         self.model = model
 
     def forward(self, input_ids, attention_mask):
-        # [YOUR CODE HERE]
-        # 1. 调用 self.model
-        # 2. 关键参数：必须设置 use_cache=False
-        # 3. 返回 outputs.logits
-        pass 
+        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+        return outputs.logits
 
 
 # ================= 主程序 =================
@@ -84,17 +82,15 @@ with torch.no_grad():
         input_names=["input_ids", "attention_mask"],
         output_names=["logits"],
         
-        # [YOUR CODE HERE] 配置 dynamic_axes
-        # 要求：允许 input_ids, attention_mask, logits 的 batch(dim 0) 和 seq(dim 1) 维度变化
         dynamic_axes={
-            
+            "input_ids": {0: "batch", 1: "seq"},
+            "attention_mask": {0: "batch", 1: "seq"},
+            "logits": {0: "batch", 1: "seq"}
         },
         
         opset_version=14,
         do_constant_folding=True,
-        
-        # [YOUR CODE HERE] 有一个关键参数用于关闭新版 Dynamo 导出器，请填入
-        # ____________ = ____________ 
+        dynamo=False,
     )
 
 print(f"✅ Export Success!")

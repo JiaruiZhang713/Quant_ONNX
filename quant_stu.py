@@ -6,29 +6,47 @@ import os
 
 # ================= TODO 4: 实现校准数据读取器 =================
 class SmartCalibrationDataReader(CalibrationDataReader):
-    def __init__(self, tokenizer, model_path):
+    def __init__(self, tokenizer, model_path, num_samples=1000):
         self.tokenizer = tokenizer
         # 自动获取模型输入名 (防止 input name mismatch)
         session = onnxruntime.InferenceSession(model_path, providers=['CPUExecutionProvider'])
         self.input_names = [inp.name for inp in session.get_inputs()]
         
-        self.data = iter([
-            "人工智能是计算机科学的一个分支。",
-            "Deep learning requires a lot of computing power.",
-            "今天天气真不错。",
-            "Python is popular."
-        ])
+        # 使用聊天格式的校准数据（更匹配实际使用场景）
+        print(f"Loading calibration dataset ({num_samples} samples)...")
+        from datasets import load_dataset
+        
+        # 加载 wikitext 作为基础文本
+        dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
+        raw_texts = [t for t in dataset["text"] if len(t.strip()) > 30][:num_samples]
+        
+        # 转换为聊天格式，与 chatbot 使用的格式一致
+        chat_texts = []
+        for text in raw_texts:
+            formatted = f"<|im_start|>user\n{text[:100]}<|im_end|>\n<|im_start|>assistant\n"
+            chat_texts.append(formatted)
+        
+        print(f"Loaded {len(chat_texts)} calibration samples (chat format)")
+        self.data = iter(chat_texts)
 
     def get_next(self):
         text = next(self.data, None)
         if text is None: return None
         
-        # [YOUR CODE HERE] 
-        # 1. 使用 tokenizer 处理 text，return_tensors="np"
-        # 2. 将数据转换为 int64 类型
-        # 3. 返回一个字典，键名必须与 self.input_names 匹配
-        #    (提示：检查 input_ids 和 attention_mask 是否都在 input_names 里)
-        return {} 
+        # 添加 padding 到固定长度，与导出时的 mask 尺寸匹配
+        encoded = self.tokenizer(
+            text, 
+            return_tensors="np",
+            padding="max_length",
+            max_length=32,
+            truncation=True
+        )
+        result = {}
+        if "input_ids" in self.input_names:
+            result["input_ids"] = encoded["input_ids"].astype(np.int64)
+        if "attention_mask" in self.input_names:
+            result["attention_mask"] = encoded["attention_mask"].astype(np.int64)
+        return result
 
 # 主程序
 model_fp32 = "qwen3_fp32.onnx"
@@ -53,9 +71,7 @@ quantize_static(
     quant_format=onnxruntime.quantization.QuantFormat.QDQ,
     activation_type=QuantType.QUInt8,
     weight_type=QuantType.QInt8,
-    
-    # [YOUR CODE HERE] 填入解决大模型存储限制的关键参数
-    
+    use_external_data_format=True,
 )
 
 print(f"✅ Quantization Complete!")
