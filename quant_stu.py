@@ -1,12 +1,20 @@
+import os
+import numpy as np
+
+# 这里我组里服务器的 /tmp 剩余空间比较小，量化时会产生大量临时文件，容易导致 "No space left on device" 错误
+# 因此设置临时目录到当前目录下，而且要在 import onnxruntime 之前设置，否则可能不生效
+temp_dir = os.path.join(os.getcwd(), "tmp_quant")
+os.makedirs(temp_dir, exist_ok=True)
+os.environ["TMPDIR"] = temp_dir
+print(f"Setting TMPDIR to: {temp_dir}")
+
 import onnxruntime
 from onnxruntime.quantization import quantize_static, CalibrationDataReader, QuantType
 from transformers import AutoTokenizer
-import numpy as np
-import os
 
 # ================= TODO 4: 实现校准数据读取器 =================
 class SmartCalibrationDataReader(CalibrationDataReader):
-    def __init__(self, tokenizer, model_path, num_samples=1000):
+    def __init__(self, tokenizer, model_path, num_samples=5000):
         self.tokenizer = tokenizer
         # 自动获取模型输入名 (防止 input name mismatch)
         session = onnxruntime.InferenceSession(model_path, providers=['CPUExecutionProvider'])
